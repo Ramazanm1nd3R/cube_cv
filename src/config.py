@@ -1,3 +1,7 @@
+"""
+Конфигурация для fluid gesture simulator
+Все параметры симуляции, физики и рендеринга в одном месте
+"""
 from dataclasses import dataclass
 import numpy as np
 
@@ -26,31 +30,31 @@ class SPHConfig:
     Параметры SPH (Smoothed Particle Hydrodynamics)
     Это ядро физической симуляции жидкости
     """
-    # Количество частиц
-    num_particles: int = 500
+    # Количество частиц (БОЛЬШЕ = реалистичнее)
+    num_particles: int = 2000  # Было 500
     
     # Физические свойства частиц
-    particle_radius: float = 0.052  # Радиус влияния частицы
-    particle_mass: float = 1.0      # Масса каждой частицы
+    particle_radius: float = 0.08  # Радиус влияния (увеличен)
+    particle_mass: float = 0.5      # Масса каждой частицы
     rest_density: float = 1000.0    # Плотность покоя (как у воды)
     
-    # Силы взаимодействия
-    gas_constant: float = 2000.0    # Константа давления (stiffness)
-    viscosity: float = 0.001        # Вязкость жидкости (0.001 = вода, больше = мед)
-    cohesion: float = 0.036         # Сила сцепления частиц (surface tension)
-    adhesion: float = 0.0           # Прилипание к стенкам
+    # Силы взаимодействия (УСИЛЕНЫ для лучшей физики)
+    gas_constant: float = 3000.0    # Константа давления (больше = жестче)
+    viscosity: float = 0.003        # Вязкость (больше = жидкость гуще)
+    cohesion: float = 0.08          # Сила сцепления (вода держится вместе)
+    adhesion: float = 0.02          # Прилипание к стенкам
     
-    # Физика движения
-    damping: float = 0.059          # Затухание скорости (энергопотери)
-    friction: float = 0.0           # Трение о стенки
-    restitution: float = 0.08       # Упругость отскока (0-1)
+    # Физика движения (УЛУЧШЕНА)
+    damping: float = 0.95           # Затухание (меньше = больше "бултыхается")
+    friction: float = 0.1           # Трение о стенки
+    restitution: float = 0.4        # Упругость отскока (больше = отскакивает)
     
-    # Гравитация
+    # Гравитация (СИЛЬНЕЕ)
     gravity: np.ndarray = None      # Будет установлено в __post_init__
     
     # Оптимизация
     smoothing_radius: float = 0.1   # Радиус сглаживания для SPH kernel
-    max_speed: float = 100.0        # Максимальная скорость частицы
+    max_speed: float = 80.0         # Максимальная скорость частицы
     
     # Spatial hashing (для быстрого поиска соседей)
     cell_size: float = 0.1          # Размер ячейки spatial grid
@@ -58,7 +62,8 @@ class SPHConfig:
     def __post_init__(self):
         """Инициализация значений по умолчанию"""
         if self.gravity is None:
-            self.gravity = np.array([0.0, -9.81, 0.0], dtype=np.float32)
+            # УВЕЛИЧЕНА гравитация для более динамичного поведения!
+            self.gravity = np.array([0.0, -20.0, 0.0], dtype=np.float32)
 
 
 @dataclass
@@ -90,7 +95,7 @@ class HandTrackingConfig:
     # MediaPipe параметры
     min_detection_confidence: float = 0.7
     min_tracking_confidence: float = 0.5
-    max_num_hands: int = 2  # Отслеживаем только одну руку
+    max_num_hands: int = 2  # Теперь отслеживаем ДВЕ руки!
     
     # Маппинг координат руки -> 3D пространство
     hand_to_world_scale: float = 10.0  # Множитель для координат руки
@@ -101,14 +106,17 @@ class HandTrackingConfig:
     
     # Жесты
     pinch_threshold: float = 0.05  # Расстояние для "схватить"
+    
+    # Two-hand gestures
+    two_hand_distance_threshold: float = 0.1  # Минимальное расстояние между руками для scale
 
 
 @dataclass
 class RenderConfig:
     """Настройки рендеринга"""
-    # Цвет частиц (оранжевый как на картинке)
-    particle_color: tuple = (1.0, 0.5, 0.2, 1.0)
-    particle_size: float = 8.0  # Размер точки на экране
+    # Цвет частиц (ЧЕРНЫЙ для контраста с фоном)
+    particle_color: tuple = (0.1, 0.1, 0.1, 1.0)  # Темно-серый/черный
+    particle_size: float = 25.0  # БОЛЬШОЙ размер!
     
     # Фон
     background_color: tuple = (0.0, 0.0, 0.0, 1.0)  # Черный

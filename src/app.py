@@ -29,6 +29,13 @@ class GPUParticleSystem:
         # === Буферы на GPU ===
         # Позиции частиц [x, y, z, _padding]
         initial_positions = self._generate_initial_positions()
+        
+        # DEBUG: Проверяем что позиции не нулевые
+        print(f"[DEBUG] Позиции частиц:")
+        print(f"  Min: {np.min(initial_positions[:, :3], axis=0)}")
+        print(f"  Max: {np.max(initial_positions[:, :3], axis=0)}")
+        print(f"  Первые 5 частиц: {initial_positions[:5, :3]}")
+        
         self.position_buffer = ctx.buffer(initial_positions.tobytes())
         
         # Скорости частиц [vx, vy, vz, _padding]
@@ -44,17 +51,25 @@ class GPUParticleSystem:
         print("[GPUParticleSystem] ✅ Инициализация завершена")
     
     def _generate_initial_positions(self) -> np.ndarray:
-        """Генерируем начальные позиции частиц"""
+        """
+        Генерируем начальные позиции частиц
+        Заполняем куб НАПОЛОВИНУ снизу (как жидкость в стакане)
+        """
         positions = np.zeros((self.num_particles, 4), dtype='f4')
         
-        # Размещаем в кубе
-        width = Config.container.width / 4
-        height = Config.container.height / 4
-        depth = Config.container.depth / 4
+        # Размеры контейнера
+        half_width = Config.container.width / 2
+        half_height = Config.container.height / 2
+        half_depth = Config.container.depth / 2
         
-        positions[:, 0] = np.random.uniform(-width, width, self.num_particles)   # x
-        positions[:, 1] = np.random.uniform(height/2, height, self.num_particles) # y (сверху)
-        positions[:, 2] = np.random.uniform(-depth, depth, self.num_particles)   # z
+        # Заполняем НИЖНЮЮ ПОЛОВИНУ куба
+        # x: от -half_width до +half_width (вся ширина)
+        # y: от -half_height до 0 (нижняя половина!)
+        # z: от -half_depth до +half_depth (вся глубина)
+        
+        positions[:, 0] = np.random.uniform(-half_width * 0.8, half_width * 0.8, self.num_particles)   # x (с небольшим отступом)
+        positions[:, 1] = np.random.uniform(-half_height * 0.9, 0, self.num_particles)  # y (НИЖНЯЯ половина)
+        positions[:, 2] = np.random.uniform(-half_depth * 0.8, half_depth * 0.8, self.num_particles)   # z (с небольшим отступом)
         positions[:, 3] = 1.0  # padding
         
         return positions
@@ -94,6 +109,7 @@ class GPUParticleSystem:
         uniform float damping;
         uniform vec3 container_min;
         uniform vec3 container_max;
+        uniform float container_scale;  // Масштаб контейнера (для двух рук)
         
         // SPH Kernel functions
         float poly6_kernel(float r, float h) {
@@ -180,7 +196,9 @@ class GPUParticleSystem:
             // === 4. INTEGRATE (Semi-Implicit Euler) ===
             vec3 acceleration = force_total / density;
             vel_i += acceleration * dt;
-            vel_i *= (1.0 - damping);  // Damping
+            
+            // Damping (меньше = больше "бултыхается")
+            vel_i *= damping;
             
             // Limit velocity
             float speed = length(vel_i);
@@ -190,36 +208,40 @@ class GPUParticleSystem:
             
             pos_i += vel_i * dt;
             
-            // === 5. COLLISION WITH CONTAINER ===
+            // === 5. COLLISION WITH CONTAINER (с учетом scale) ===
             float restitution = 0.3;
             
+            // Применяем scale к границам контейнера
+            vec3 scaled_min = container_min * container_scale;
+            vec3 scaled_max = container_max * container_scale;
+            
             // X bounds
-            if (pos_i.x < container_min.x) {
-                pos_i.x = container_min.x;
+            if (pos_i.x < scaled_min.x) {
+                pos_i.x = scaled_min.x;
                 vel_i.x *= -restitution;
             }
-            if (pos_i.x > container_max.x) {
-                pos_i.x = container_max.x;
+            if (pos_i.x > scaled_max.x) {
+                pos_i.x = scaled_max.x;
                 vel_i.x *= -restitution;
             }
             
             // Y bounds
-            if (pos_i.y < container_min.y) {
-                pos_i.y = container_min.y;
+            if (pos_i.y < scaled_min.y) {
+                pos_i.y = scaled_min.y;
                 vel_i.y *= -restitution;
             }
-            if (pos_i.y > container_max.y) {
-                pos_i.y = container_max.y;
+            if (pos_i.y > scaled_max.y) {
+                pos_i.y = scaled_max.y;
                 vel_i.y *= -restitution;
             }
             
             // Z bounds
-            if (pos_i.z < container_min.z) {
-                pos_i.z = container_min.z;
+            if (pos_i.z < scaled_min.z) {
+                pos_i.z = scaled_min.z;
                 vel_i.z *= -restitution;
             }
-            if (pos_i.z > container_max.z) {
-                pos_i.z = container_max.z;
+            if (pos_i.z > scaled_max.z) {
+                pos_i.z = scaled_max.z;
                 vel_i.z *= -restitution;
             }
             
@@ -258,6 +280,12 @@ class GPUParticleSystem:
         half_d = Config.container.depth / 2
         self.compute_shader['container_min'].value = (-half_w, -half_h, -half_d)
         self.compute_shader['container_max'].value = (half_w, half_h, half_d)
+        
+        # Передаем scale контейнера
+        # Извлекаем scale из transform matrix (предполагается uniform scale)
+        # Scale находится на диагонали матрицы
+        scale_from_matrix = np.sqrt(container_transform[0, 0]**2 + container_transform[0, 1]**2 + container_transform[0, 2]**2)
+        self.compute_shader['container_scale'].value = float(scale_from_matrix)
         
         # Запускаем compute shader
         # 256 частиц на work group, округляем вверх
@@ -373,8 +401,16 @@ class FluidGestureApp:
         # View-Projection matrix
         aspect = self.window_size[0] / self.window_size[1]
         proj = Matrix44.perspective_projection(60.0, aspect, 0.1, 100.0)
-        view = Matrix44.look_at([0, 0, 10], [0, 0, 0], [0, 1, 0])
+        
+        # Камера ДАЛЬШЕ чтобы видеть весь куб
+        view = Matrix44.look_at(
+            [0, 0, 15],    # Позиция камеры (дальше!)
+            [0, 0, 0],     # Смотрим на центр
+            [0, 1, 0]      # Up вектор
+        )
         self.vp_matrix = (proj * view).astype('f4')
+        
+        print(f"[Renderer] Камера на расстоянии 15 units от центра")
         
         # === Particle Renderer ===
         particle_vertex = """
@@ -385,7 +421,7 @@ class FluidGestureApp:
         
         void main() {
             gl_Position = vp * model * vec4(in_position, 1.0);
-            gl_PointSize = 8.0;
+            gl_PointSize = 25.0;  // БОЛЬШОЙ размер!
         }
         """
         
@@ -395,9 +431,19 @@ class FluidGestureApp:
         uniform vec4 color;
         
         void main() {
+            // Идеально круглые частицы
             vec2 coord = gl_PointCoord - vec2(0.5);
-            if (length(coord) > 0.5) discard;
-            fragColor = color;
+            float dist = length(coord);
+            
+            // Круг с мягкими краями
+            if (dist > 0.5) discard;
+            
+            // Градиент от центра к краям (более объемный вид)
+            float brightness = 1.0 - (dist * 1.5);
+            brightness = clamp(brightness, 0.3, 1.0);
+            
+            // Черный цвет с вариацией яркости
+            fragColor = vec4(color.rgb * brightness, color.a);
         }
         """
         
@@ -670,6 +716,13 @@ class FluidGestureApp:
         # Scale
         text = self.font_small.render(f"SCALE: {self.current_scale:.2f}x", True, (0, 255, 255))
         self.text_surface.blit(text, (10, y_offset))
+        y_offset += 30
+        
+        # Заполнение (визуально)
+        fill_percent = 50  # Половина
+        fill_text = f"FILL: {fill_percent}% (Half-filled)"
+        text = self.font_small.render(fill_text, True, (100, 200, 255))
+        self.text_surface.blit(text, (10, y_offset))
         y_offset += 40
         
         # Параметры
@@ -799,6 +852,18 @@ class FluidGestureApp:
         self.particle_program['vp'].write(self.vp_matrix.tobytes())
         self.particle_program['model'].write(self.container_transform.tobytes())
         self.particle_program['color'].value = Config.render.particle_color
+        
+        # DEBUG: Выводим раз в 5 секунд
+        if not hasattr(self, '_last_particle_debug'):
+            self._last_particle_debug = 0
+        
+        if time.time() - self._last_particle_debug > 5.0:
+            print(f"\n[PARTICLE DEBUG]")
+            print(f"  Количество: {self.particles.num_particles}")
+            print(f"  Цвет: {Config.render.particle_color}")
+            print(f"  Point size: 15.0")
+            self._last_particle_debug = time.time()
+        
         self.particle_vao.render(moderngl.POINTS, vertices=self.particles.num_particles)
         
         # === 3. DEBUG INFO СВЕРХУ ВСЕГО ===
