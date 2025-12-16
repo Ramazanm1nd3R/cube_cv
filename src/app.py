@@ -208,41 +208,44 @@ class GPUParticleSystem:
             
             pos_i += vel_i * dt;
             
-            // === 5. COLLISION WITH CONTAINER (с учетом scale) ===
+            // === 5. COLLISION WITH CONTAINER (УСИЛЕННАЯ!) ===
             float restitution = 0.3;
+            float margin = 0.01;  // Небольшой отступ от стенок
             
             // Применяем scale к границам контейнера
             vec3 scaled_min = container_min * container_scale;
             vec3 scaled_max = container_max * container_scale;
             
-            // X bounds
-            if (pos_i.x < scaled_min.x) {
-                pos_i.x = scaled_min.x;
-                vel_i.x *= -restitution;
+            // X bounds (с margin)
+            if (pos_i.x < scaled_min.x + margin) {
+                pos_i.x = scaled_min.x + margin;
+                vel_i.x = abs(vel_i.x) * restitution;  // Отскок наружу
             }
-            if (pos_i.x > scaled_max.x) {
-                pos_i.x = scaled_max.x;
-                vel_i.x *= -restitution;
-            }
-            
-            // Y bounds
-            if (pos_i.y < scaled_min.y) {
-                pos_i.y = scaled_min.y;
-                vel_i.y *= -restitution;
-            }
-            if (pos_i.y > scaled_max.y) {
-                pos_i.y = scaled_max.y;
-                vel_i.y *= -restitution;
+            if (pos_i.x > scaled_max.x - margin) {
+                pos_i.x = scaled_max.x - margin;
+                vel_i.x = -abs(vel_i.x) * restitution;  // Отскок внутрь
             }
             
-            // Z bounds
-            if (pos_i.z < scaled_min.z) {
-                pos_i.z = scaled_min.z;
-                vel_i.z *= -restitution;
+            // Y bounds (КРИТИЧНО! Дно куба!)
+            if (pos_i.y < scaled_min.y + margin) {
+                pos_i.y = scaled_min.y + margin;  // НЕ ПРОВАЛИВАЕМСЯ!
+                vel_i.y = abs(vel_i.y) * restitution;  // Отскок вверх
+                vel_i.x *= 0.9;  // Трение о дно
+                vel_i.z *= 0.9;
             }
-            if (pos_i.z > scaled_max.z) {
-                pos_i.z = scaled_max.z;
-                vel_i.z *= -restitution;
+            if (pos_i.y > scaled_max.y - margin) {
+                pos_i.y = scaled_max.y - margin;
+                vel_i.y = -abs(vel_i.y) * restitution;  // Отскок вниз
+            }
+            
+            // Z bounds (с margin)
+            if (pos_i.z < scaled_min.z + margin) {
+                pos_i.z = scaled_min.z + margin;
+                vel_i.z = abs(vel_i.z) * restitution;
+            }
+            if (pos_i.z > scaled_max.z - margin) {
+                pos_i.z = scaled_max.z - margin;
+                vel_i.z = -abs(vel_i.z) * restitution;
             }
             
             // Обновляем буферы
@@ -333,7 +336,9 @@ class FluidGestureApp:
         
         # ModernGL context
         self.ctx = moderngl.create_context()
-        self.ctx.enable(moderngl.DEPTH_TEST | moderngl.BLEND)
+        self.ctx.enable(moderngl.DEPTH_TEST 
+                        | moderngl.BLEND
+                        | moderngl.PROGRAM_POINT_SIZE)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         
         print(f"✅ OpenGL {self.ctx.version_code // 100}.{self.ctx.version_code % 100}")
@@ -380,7 +385,7 @@ class FluidGestureApp:
         self.last_fps_time = time.time()
         
         # Physics
-        self.physics_dt = 1.0 / 60.0  # Fixed 60 Hz physics
+        self.physics_dt = 1.0 / 120.0  # Fixed 120 Hz physics (меньше timestep = точнее!)
         self.physics_accumulator = 0.0
         
         print("\n" + "=" * 70)
@@ -415,13 +420,13 @@ class FluidGestureApp:
         # === Particle Renderer ===
         particle_vertex = """
         #version 330
-        in vec3 in_position;
+        in vec4 in_position;  // ИСПРАВЛЕНО: vec4 вместо vec3!
         uniform mat4 vp;
         uniform mat4 model;
         
         void main() {
-            gl_Position = vp * model * vec4(in_position, 1.0);
-            gl_PointSize = 25.0;  // БОЛЬШОЙ размер!
+            gl_Position = vp * model * vec4(in_position.xyz, 1.0);  // Используем .xyz
+            gl_PointSize = 50.0;   
         }
         """
         
@@ -442,7 +447,7 @@ class FluidGestureApp:
             float brightness = 1.0 - (dist * 1.5);
             brightness = clamp(brightness, 0.3, 1.0);
             
-            // Черный цвет с вариацией яркости
+            // Цвет с вариацией яркости
             fragColor = vec4(color.rgb * brightness, color.a);
         }
         """
@@ -848,7 +853,9 @@ class FluidGestureApp:
         self.container_program['color'].value = Config.container.wireframe_color
         self.container_vao.render(moderngl.LINES, vertices=self.container_indices_count)
         
-        # Particles (с прозрачностью)
+        # Particles (БЕЗ depth test - всегда видны!)
+        self.ctx.disable(moderngl.DEPTH_TEST)  # КРИТИЧНО!
+        
         self.particle_program['vp'].write(self.vp_matrix.tobytes())
         self.particle_program['model'].write(self.container_transform.tobytes())
         self.particle_program['color'].value = Config.render.particle_color
@@ -861,10 +868,13 @@ class FluidGestureApp:
             print(f"\n[PARTICLE DEBUG]")
             print(f"  Количество: {self.particles.num_particles}")
             print(f"  Цвет: {Config.render.particle_color}")
-            print(f"  Point size: 15.0")
+            print(f"  Point size: 200.0 (ГИГАНТСКИЙ!)")
+            print(f"  Depth test: DISABLED (всегда видны)")
             self._last_particle_debug = time.time()
         
         self.particle_vao.render(moderngl.POINTS, vertices=self.particles.num_particles)
+        
+        self.ctx.enable(moderngl.DEPTH_TEST)  # Включаем обратно
         
         # === 3. DEBUG INFO СВЕРХУ ВСЕГО ===
         if self.show_debug:

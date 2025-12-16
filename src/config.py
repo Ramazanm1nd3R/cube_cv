@@ -31,7 +31,7 @@ class SPHConfig:
     Это ядро физической симуляции жидкости
     """
     # Количество частиц (БОЛЬШЕ = реалистичнее)
-    num_particles: int = 2000  # Было 500
+    num_particles: int = 10000  
     
     # Физические свойства частиц
     particle_radius: float = 0.08  # Радиус влияния (увеличен)
@@ -114,9 +114,10 @@ class HandTrackingConfig:
 @dataclass
 class RenderConfig:
     """Настройки рендеринга"""
-    # Цвет частиц (ЧЕРНЫЙ для контраста с фоном)
-    particle_color: tuple = (0.1, 0.1, 0.1, 1.0)  # Темно-серый/черный
-    particle_size: float = 25.0  # БОЛЬШОЙ размер!
+    # Цвет частиц (ЧЕРНЫЙ как вода)
+    # particle_color: tuple = (0.05, 0.05, 0.05, 1.0)  # Почти черный
+    particle_color = (1.0, 1.0, 1.0, 1.0)
+    particle_size: float = 1000.0  
     
     # Фон
     background_color: tuple = (0.0, 0.0, 0.0, 1.0)  # Черный
