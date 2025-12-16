@@ -426,7 +426,7 @@ class FluidGestureApp:
         
         void main() {
             gl_Position = vp * model * vec4(in_position.xyz, 1.0);  // Используем .xyz
-            gl_PointSize = 50.0;   
+            gl_PointSize = 200.0;   
         }
         """
         
